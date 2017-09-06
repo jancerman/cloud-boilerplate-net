@@ -7,11 +7,15 @@ using KenticoCloud.Delivery.InlineContentItems;
 using Newtonsoft.Json.Linq;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Caching.Memory;
+using System.Reflection;
+using System.Threading;
 
 namespace CloudBoilerplateNet.Services
 {
     public class CachedDeliveryClient : IDeliveryClient, IDisposable
     {
+        protected const string CONTENT_ITEM_TYPE_CODENAME = "content_item";
+
         #region "Fields"
 
         private bool _disposed = false;
@@ -23,6 +27,12 @@ namespace CloudBoilerplateNet.Services
         #region "Properties"
 
         public int CacheExpirySeconds
+        {
+            get;
+            set;
+        }
+
+        public List<string> CacheKeys
         {
             get;
             set;
@@ -273,6 +283,42 @@ namespace CloudBoilerplateNet.Services
 
         protected async Task<T> GetOrCreateAsync<T>(string key, Func<Task<T>> factory)
         {
+            if (!_cache.TryGetValue(key, out object cacheEntry))
+            {
+                var cacheEntryOptions = new MemoryCacheEntryOptions().SetSlidingExpiration(TimeSpan.FromSeconds(CacheExpirySeconds));
+                T response = await factory.Invoke();
+
+                if (response is DeliveryItemResponse)
+                {
+                    var allCodenames = GetCodenamesFromResponse(response);
+                    var entry = _cache.Set($"{CONTENT_ITEM_TYPE_CODENAME}|{allCodenames.itemCodename}", response);
+
+                    foreach (var codename in allCodenames.modularContentCodenames)
+                    {
+                        if (_cache.TryGetValue($"{CONTENT_ITEM_TYPE_CODENAME}|{codename}_dummy", out (CancellationTokenSource cts, List<string> dependencies) dummy))
+                        {
+                            foreach (var dependency in dummy.dependencies)
+                            {
+
+                            }
+                            _cache.Set($"{CONTENT_ITEM_TYPE_CODENAME}|{allCodenames.itemCodename}_dummy", cachedTokenSource);
+                        }
+                    }
+                }
+
+                if (response is DeliveryItemListingResponse)
+                {
+                    var allCodenames = GetCodenamesFromListingResponse(response);
+                    codenames.AddRange(allCodenames.itemCodenames);
+                    codenames.AddRange(allCodenames.modularContentCodenames);
+                }
+
+                _cache.Set<T>()
+
+
+
+            }
+
             var result = _cache.GetOrCreateAsync<T>(key, entry =>
             {
                 entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(CacheExpirySeconds);
@@ -280,6 +326,50 @@ namespace CloudBoilerplateNet.Services
             });
 
             return await result;
+        }
+
+        public static (string itemCodename, IEnumerable<string> modularContentCodenames) GetCodenamesFromResponse(object response)
+        {
+            var item = response.GetType().GetTypeInfo().GetProperty("Item", typeof(ContentItem)).GetValue(response) as ContentItem;
+
+            return (item.System.Codename, GetModularContentCodenames(response));
+        }
+
+        public static (IEnumerable<string> itemCodenames, IEnumerable<string> modularContentCodenames) GetCodenamesFromListingResponse(object response)
+        {
+            var items = response.GetType().GetTypeInfo().GetProperty("Items", typeof(IReadOnlyList<ContentItem>)).GetValue(response) as IReadOnlyList<ContentItem>;
+
+            return (items.Select(i => i.System.Codename), GetModularContentCodenames(response));
+        }
+
+        public static IEnumerable<string> GetModularContentCodenames(object response)
+        {
+            var modularContent = response.GetType().GetTypeInfo().GetProperty("ModularContent", typeof(Dictionary<string, ContentItem>)).GetValue(response) as Dictionary<string, ContentItem>;
+
+            return modularContent.Keys;
+        }
+
+        /// <summary>
+        /// Gets the codenames of <see cref="IEnumerable{Object}"/> content items using <see cref="System.Reflection"/>.
+        /// </summary>
+        /// <param name="contentItems">The shallow content items to be fetched again using their codenames</param>
+        /// <returns>The codenames</returns>
+        public static IEnumerable<string> GetContentItemCodenames(IEnumerable<object> contentItems)
+        {
+            if (contentItems == null)
+            {
+                throw new ArgumentNullException(nameof(contentItems));
+            }
+
+            var codenames = new List<string>();
+
+            foreach (var item in contentItems)
+            {
+                ContentItemSystemAttributes system = item.GetType().GetTypeInfo().GetProperty("System", typeof(ContentItemSystemAttributes)).GetValue(item) as ContentItemSystemAttributes;
+                codenames.Add(system.Codename);
+            }
+
+            return codenames;
         }
 
         protected virtual void Dispose(bool disposing)
