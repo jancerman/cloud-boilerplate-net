@@ -15,7 +15,7 @@ namespace CloudBoilerplateNet.Controllers
 
         public async Task<ActionResult> Index()
         {
-            // TODO: The different system types which should be included in the sitemap should be specified in the InFilter params
+            // TODO: In the InFilter params, specify which content types should be included in the sitemap
             var parameters = new List<IQueryParameter>
             {
                 new DepthParameter(0),
@@ -35,7 +35,7 @@ namespace CloudBoilerplateNet.Controllers
 
         private static string GetPageUrl(ContentItemSystemAttributes system)
         {
-            // TODO: The URL generation logic should be adjusted to match your website
+            // TODO: Adjust the URL generation logic to match your website
             var url = string.Empty;
 
             if(system.SitemapLocation.Any())
